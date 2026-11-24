@@ -1,1 +1,66 @@
-<div class="grid"><section class="panel"><h2>当班原件指纹</h2><dl>{% for name,hash in receipt.inputs.items() %}<dt>{{ name }}</dt><dd class="hash">{{ hash }}</dd>{% endfor %}</dl><button id="rerun" data-run="{{ key }}" type="button">复算本簿</button><output id="feedback" role="status"></output></section><section class="panel"><h2>归档目录</h2><ul>{% for row in history %}<li><a href="{{ url_for('tide_desk.desk', chapter='journal',run=row.run_id) }}">{{ row.run_id[:12] }} · {{ row.started_at }}</a></li>{% endfor %}</ul></section></div>
+<div class="grid">
+  {% set tier = tiers.get(key) if key and tiers else None %}
+  <section class="panel" id="migration-result" data-run="{{ key }}"
+           data-migration-state="{{ tier.state if tier else 'hot' }}" aria-live="polite">
+    <h2>值班盘留簿与移库结果</h2>
+    <p class="balance">值班盘容量为 {{ duty.capacity if duty and duty.capacity is not none else 1 }} 本。只能留一本时，优先留<b>最近复算的旧簿</b>：复算代表复盘热度；刚归档但尚未复算的新簿先写出已验副本再移库，原号仍可查。若有多本复算簿，留复算时刻最新者；都未复算时才按归档和使用时刻比较。被移走的簿本必须先写出副本，并验过原件指纹与结论摘要，才删除值班盘原簿。移库失败后可重试；移库后用原号查簿，副本损坏就不签发。</p>
+    {% if move_notice %}
+      <p class="move-notice move-{{ move_notice.kind }}" role="status">{{ move_notice.text }}</p>
+    {% endif %}
+    {% if damaged_id %}
+      <p class="move-notice move-damaged" role="alert">原号 {{ damaged_id[:12] }} 的移库副本损坏或核验未通过；已阻止签发，请修复后重试。</p>
+    {% elif tier and tier.state == 'moved' %}
+      <p class="move-notice move-success">移库结果：{{ key[:12] }} 已移至副本库，副本已验过原件和结论；值班盘位置已腾出，仍可用原号查簿。</p>
+      <p class="hash">{{ tier.replica_path }}</p>
+    {% elif tier and tier.state == 'failed' %}
+      <p class="move-notice move-failed">移库失败：{{ tier.last_error or '副本未通过核验' }}。原簿仍在值班盘，未腾位，可重试。</p>
+    {% elif tier and tier.state == 'damaged' %}
+      <p class="move-notice move-damaged">移库副本损坏：{{ tier.last_error or '核验未通过' }}。用原号仍可定位，但损坏副本不签发。</p>
+    {% else %}
+      <p class="move-notice move-hot">当前簿本完整保存在值班盘。移库时会先验副本，再腾位。</p>
+    {% endif %}
+    <div class="actions">
+      <button id="rerun" data-run="{{ key }}" type="button">复算本簿</button>
+      <button id="move-copy" data-run="{{ key }}" type="button">移库此簿并腾位</button>
+      <form method="post" action="{{ url_for('tide_desk.handover_page') }}">
+        <button id="rotate-duty" type="submit">交班腾位（只留一本）</button>
+      </form>
+      <form method="post" action="{{ url_for('tide_desk.move_journal_page', key=key) }}">
+        <button type="submit">提交此簿移库（可重试）</button>
+      </form>
+    </div>
+    <output id="feedback" role="status"></output>
+    <output id="move-feedback" role="status"></output>
+  </section>
+
+  <section class="panel">
+    <h2>当班原件指纹</h2>
+    {% if receipt %}
+      <dl>{% for name,hash in receipt.inputs.items() %}<dt>{{ name }}</dt><dd class="hash">{{ hash }}</dd>{% endfor %}</dl>
+    {% else %}
+      <p class="move-notice move-damaged">当前原号的副本损坏，无法安全展示原件指纹；证据签发已停止。</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>归档目录与库位</h2>
+    <ul class="journal-list">
+      {% for row in history %}
+        {% set item_tier = tiers.get(row.run_id) if tiers else None %}
+        <li>
+          <a href="{{ url_for('tide_desk.desk', chapter='journal',run=row.run_id) }}">{{ row.run_id[:12] }} · {{ row.started_at }}</a>
+          {% if item_tier and item_tier.state == 'moved' %}
+            <span class="badge badge-cold">已移库 · 副本已验</span>
+          {% elif item_tier and item_tier.state == 'failed' %}
+            <span class="badge badge-failed">移库失败 · 可重试</span>
+          {% elif item_tier and item_tier.state == 'damaged' %}
+            <span class="badge badge-damaged">副本损坏 · 不签发</span>
+          {% else %}
+            <span class="badge badge-hot">值班盘</span>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+    <p class="note">移库后链接仍使用原归档号；读取时会核验副本原件和结论，副本损坏则证据签发返回失败。</p>
+  </section>
+</div>

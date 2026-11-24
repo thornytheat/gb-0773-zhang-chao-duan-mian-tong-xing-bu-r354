@@ -14,9 +14,9 @@ docker compose up --build
 
 1. 首页选海棠17，核对 3000 秒窗口中的 1500 秒可行、900 秒不可行、600 秒缺证。
 2. 打开全程可行潮窗，查看放行起止、临界点和断面潮尺行。
-3. 打开运行留档，复算并保留原归档号，再到潮窗证据签发下载 JSON 或打印。
+3. 打开运行留档，复算并保留原归档号；值班盘只能留一本时优先保留最近复算的旧簿，刚归档但未复算的新簿验副本后移库。可执行单簿移库或交班腾位。副本核对原件指纹、结论摘要并从原件复算通过后才腾出值班盘原簿；移库失败可重试，移库后仍用原号查簿，副本损坏则不签发。再到潮窗证据签发下载 JSON 或打印。
 4. 切换连续测站样例，海棠17的全部 3000 秒均可行。
 
-`GET /api/stage/{readings,datum,crossings,windows,coverage}` 可查看样例阶段结果。对同路径执行 POST 可提交 `{"sources":{"observations":"...","stations":"...","vessels":"..."}}`。`POST /api/journal` 接受同一输入或 `{"sample":"dirty"}`。`GET /api/journal/<id>` 查归档，`POST /api/journal/<id>/rerun` 复算，`GET /api/export/<id>` 下载证据。
+`GET /api/stage/{readings,datum,crossings,windows,coverage}` 可查看样例阶段结果。对同路径执行 POST 可提交 `{"sources":{"observations":"...","stations":"...","vessels":"..."}}`。`POST /api/journal` 接受同一输入或 `{"sample":"dirty"}`。`GET /api/journal` 列目录，`GET /api/journal/<id>` 查归档（原簿已移库时自动读取已验副本），`POST /api/journal/<id>/rerun` 复算，`POST /api/journal/<id>/migrate` 写副本、核验并腾位（`/move`、`/transfer` 为同义路由），`POST /api/journal/rotate` 按值班盘容量执行留簿（默认复算热度优先），`GET /api/export/<id>` 下载证据；副本损坏时导出返回 409 `INVALID_PROOF`。
 
 字段见 [数据字典](docs/DATA-DICTIONARY.md)，规则与回归见 [深度登记](docs/DEPTH.md)。本机运行 `python -m pytest -q`。

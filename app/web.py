@@ -1,6 +1,6 @@
 from fractions import Fraction
 
-from flask import Blueprint, render_template, request
+from flask import Blueprint, redirect, render_template, request, url_for
 
 from app.api import journal
 from app.clock import instant
@@ -25,9 +25,22 @@ def desk(chapter='coverage'):
         raise TideError('NO_STAGE', '找不到潮窗模块', 404)
     sample = request.args.get('sample', 'dirty')
     key = request.args.get('run')
-    if key or chapter in ('journal', 'proof'):
+    damaged_id = request.args.get('damaged')
+    if damaged_id and chapter == 'journal':
+        # 损坏副本不能通过打开留档页而被静默重算“修复”；只渲染预览框架和损坏状态。
+        key = damaged_id
+        sources = load_sources({'sample': sample})
+        reports = calculate(sources)
+        receipt = None
+    elif key or chapter in ('journal', 'proof'):
         key = key or record(journal(), load_sources({'sample': sample}))['run_id']
-        receipt, sources, reports = journal().get(key)
+        try:
+            receipt, sources, reports = journal().get(key)
+        except TideError as error:
+            if chapter == 'journal' and error.code in ('REPLICA_DAMAGED', 'COPY_DAMAGED'):
+                return redirect(url_for('tide_desk.desk', chapter='journal',
+                                        damaged=key, error_code=error.code))
+            raise
     else:
         sources = load_sources({'sample': sample})
         reports = calculate(sources)
@@ -36,8 +49,45 @@ def desk(chapter='coverage'):
     if vessel not in reports['coverage']['ships']:
         raise TideError('NO_VESSEL', '找不到该船期', 404)
     proof = issue(receipt, sources, reports) if chapter == 'proof' else None
+    journal_view = chapter == 'journal'
+    tiers = journal().statuses() if journal_view and hasattr(journal(), 'statuses') else {}
+    duty = journal().duty_status() if journal_view and hasattr(journal(), 'duty_status') else None
+    move_notice = None
+    if journal_view:
+        if request.args.get('handover') == 'done':
+            move_notice = {'kind': 'success', 'text': request.args.get('message') or
+                           '交班腾位完成：值班盘只保留最近使用的簿本，其余簿本均已验副本后移库。'}
+        elif request.args.get('moved') == 'success':
+            move_notice = {'kind': 'success', 'text': request.args.get('message') or
+                           '移库成功：副本已验过原件与结论，值班盘已腾位，原号仍可查。'}
+        elif request.args.get('moved') == 'failed':
+            move_notice = {'kind': 'failed', 'text': request.args.get('message') or
+                           '移库失败：原簿未腾位，核验通过后可重试。'}
+        elif request.args.get('damaged'):
+            move_notice = {'kind': 'damaged', 'text': '移库副本损坏，已阻止签发；请修复副本或重试移库核验。'}
     return render_template('base.html', chapter=chapter, chapters=CHAPTERS, states=STATES, sample=sample,
                            receipt=receipt, key=key, reports=reports, vessel=vessel, reason=REASONS,
                            gauge_fill=min(100, float(Fraction(reports['windows'][vessel]['order']['threshold_m'])) * 25),
                            seal=proof['seal_sha256'] if proof else None, time=instant, rule=RULES,
-                           history=journal().list() if chapter == 'journal' else [])
+                           history=journal().list() if journal_view else [],
+                           tiers=tiers, duty=duty, move_notice=move_notice,
+                           damaged_id=request.args.get('damaged'))
+
+
+@web.post('/desk/journal/<key>/move')
+def move_journal_page(key):
+    try:
+        result = journal().migrate(key, reason='page')
+        return redirect(url_for('tide_desk.desk', chapter='journal', run=key,
+                                moved='success', message=result['message']))
+    except TideError as error:
+        return redirect(url_for('tide_desk.desk', chapter='journal', run=key,
+                                moved='failed', message=str(error)))
+
+
+@web.post('/desk/handover')
+@web.post('/desk/journal/rotate')
+def handover_page():
+    result = journal().enforce_capacity()
+    return redirect(url_for('tide_desk.desk', chapter='journal', run=result.get('keeper_id'),
+                            handover='done', message=result.get('message', '腾位完成')))

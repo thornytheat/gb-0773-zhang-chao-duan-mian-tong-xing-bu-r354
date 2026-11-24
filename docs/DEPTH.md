@@ -13,6 +13,7 @@
 | M5 船期覆盖勾稽 | 回查申请时点和时长差额 | `/api/stage/coverage` | `app/modules/schedule/service.py` | `tests/test_coverage.py` |
 | M6 批次留档复跑 | 同源复算及归档查阅 | `/api/journal` | `app/modules/journal/service.py` `app/modules/journal/store.py` | `tests/test_journal.py` |
 | M7 潮窗证据签发 | 验证原件及报告摘要 | `/api/export/<id>` | `app/modules/proof/service.py` | `tests/test_proof.py` |
+| M8 值班盘移库 | 验副本、腾位、原号回查、损坏停签 | `/api/journal/<id>/migrate` `/api/journal/rotate` | `app/modules/journal/store.py` `app/modules/journal/transfer.py` | `tests/test_migration.py` |
 
 | TRAP | 现象 | 朴素处理后果 | 处理 | 位置 | 测试 |
 |---|---|---|---|---|---|
@@ -28,3 +29,11 @@
 | TRAP-23 | 船期右端 | 重复归属 | 排除右端 | `app/modules/passage/service.py` | `tests/test_windows.py::test_half_open_end` |
 
 海棠17窗口 3000 秒 = 1500 可行 + 900 不可行 + 600 缺证。潮尺接收 20 条数据，18 条格式采信，11 条进入断面判定，2 条格式隔离、7 条业务隔离。重复表头及空行单计。以分钟级实测样例演示，不覆盖未带偏移的当地时刻、曲线外推和实时设备连接。
+
+## 值班盘移库
+
+- 值班盘只留一本时默认“复算热度优先”：有复算记录的旧簿优先于未复算的新归档，多本复算簿按 `last_rerun_at` 排序；都未复算时再按最近使用/归档时刻和单调序号裁决。因此题设中最近复算的旧簿保留，刚归档的新簿验副本后移库。
+- `POST /api/journal/<id>/migrate` 先原子写副本，再从磁盘回读，核对原件 SHA-256、`result_sha256`，并从原件复算结论；全部通过后才删除值班盘完整原簿。
+- 写副本或核验失败时状态置 `failed`，原簿不删，接口返回 `retryable:true`；同一路由可重试并覆盖未验副本。
+- 移库与复算按原号串行化关键区；SQLite 行和原子替换的 JSON 副本均为完整快照，因此复算要么读到值班盘原簿，要么读到已验副本。
+- 移库后仍以原 `run_id` 调 `GET /api/journal/<id>`；副本损坏时返回 409 `REPLICA_DAMAGED`，`GET /api/export/<id>` 不签发并返回 `INVALID_PROOF`。
